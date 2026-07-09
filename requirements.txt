@@ -44,6 +44,7 @@ colorlog==6.9.0
 # ==========================
 pytest==8.3.4
 pytest-asyncio==0.25.0
+google-genai
 
 # ==========================
 # Future (Optional)
