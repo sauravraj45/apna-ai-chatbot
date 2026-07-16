@@ -15,12 +15,15 @@ class FAQTool(BaseTool):
     from a structured knowledge base -- never invents policy details."""
 
     name: ClassVar[str] = "search_faq"
+    
     description: ClassVar[str] = (
-        "Search APNA STORE's policy knowledge base for general questions about "
-        "orders, payments, refunds, returns, replacements, shipping, coupons, "
-        "account/login, or support. Use this for policy/how-to questions that "
-        "are NOT about the user's specific personal data."
+        "Search APNA STORE's FAQ knowledge base for general shopping, store policies, "
+        "orders, delivery, payments, refunds, returns, replacements, account, "
+        "shopping, offers, coupons, login, security and customer support questions. "
+        "Use this only for general information and store policies, not for a user's "
+        "personal order or account data."
     )
+    
     parameters: ClassVar[Dict[str, Any]] = {
         "type": "object",
         "properties": {
@@ -33,10 +36,18 @@ class FAQTool(BaseTool):
         entry = find_faq_answer(query)
         if entry is None:
             logger.info("No FAQ match for query: %s", query[:80])
+            
             return ToolError(
                 error=(
-                    "I don't have a specific policy article for that. Please contact "
-                    "customer support for further help."
+                    "I couldn't find a matching help article for your question. "
+                    "Please try asking in a different way or contact APNA STORE Customer Support if you need further assistance."
                 )
             )
-        return FAQResult(topic=entry["topic"], answer=entry["answer"])
+            
+        
+        return FAQResult(
+            category=entry["category"],
+            topic=entry["topic"],
+            answer=entry["answer"],
+            next_actions=entry.get("next_actions", []),
+        )

@@ -1,3 +1,4 @@
+
 """
 Structured schemas for tool outputs.
 
@@ -11,7 +12,7 @@ serialized here.
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UserProfileResult(BaseModel):
@@ -54,7 +55,7 @@ class OrderSummaryResult(BaseModel):
 
 
 class OrderDetailResult(OrderSummaryResult):
-    items: List[OrderItemResult] = []
+    items: List[OrderItemResult] = Field(default_factory=list)
 
 
 class OrderListResult(BaseModel):
@@ -72,14 +73,27 @@ class DeliveryAddressResult(BaseModel):
     country: Optional[str] = None
 
 
+# ===========================
+# FAQ
+# ===========================
+
 class FAQResult(BaseModel):
+    category: str
     topic: str
     answer: str
+    next_actions: List[str] = Field(default_factory=list)
 
+
+# ===========================
+# Error
+# ===========================
 
 class ToolError(BaseModel):
-    """Returned by a tool instead of raising, so the AI service can pass a
-    clean, structured "not found / not available" signal to the LLM rather
-    than an exception."""
+    """
+    Returned by a tool instead of raising an exception so the AI
+    service can gracefully inform the user.
+    """
 
     error: str
+    
+    
