@@ -40,3 +40,33 @@ async def get_current_user_id(
     user_id = extract_user_id(payload)
     logger.info("Authenticated request for user_id=%s (token=%s)", user_id, redact(token))
     return user_id
+
+async def get_optional_user_id(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> int | None:
+    """
+    Resolve user id if JWT exists.
+    Return None if no JWT.
+    Never raise AuthenticationError.
+    """
+
+    if credentials is None or not credentials.credentials:
+        logger.info("Anonymous AI request")
+        return None
+
+    try:
+        token = credentials.credentials
+        payload = decode_jwt(token)
+        user_id = extract_user_id(payload)
+
+        logger.info(
+            "Authenticated AI request user_id=%s (token=%s)",
+            user_id,
+            redact(token),
+        )
+
+        return user_id
+
+    except AuthenticationError:
+        logger.warning("Invalid JWT. Treating request as anonymous.")
+        return None

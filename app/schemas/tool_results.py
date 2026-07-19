@@ -88,6 +88,11 @@ class FAQResult(BaseModel):
 # Error
 # ===========================
 
+class AuthenticationResult(BaseModel):
+    authenticated: bool
+    user_id: int
+    
+    
 class ToolError(BaseModel):
     """
     Returned by a tool instead of raising an exception so the AI

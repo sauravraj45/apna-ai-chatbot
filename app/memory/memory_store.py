@@ -26,7 +26,7 @@ class StoredMessage:
 @dataclass
 class ConversationRecord:
     conversation_id: str
-    user_id: int
+    user_id: int | None
     messages: List[StoredMessage] = field(default_factory=list)
 
 
@@ -34,19 +34,28 @@ class MemoryBackend(ABC):
     """Abstract conversation storage backend."""
 
     @abstractmethod
-    async def get(self, conversation_id: str, user_id: int) -> Optional[ConversationRecord]:
+    async def get(self, conversation_id: str, user_id: int | None) -> Optional[ConversationRecord]:
         ...
 
     @abstractmethod
-    async def create(self, conversation_id: str, user_id: int) -> ConversationRecord:
+    async def create(self, conversation_id: str, user_id: int | None) -> ConversationRecord:
         ...
 
     @abstractmethod
-    async def append_message(self, conversation_id: str, user_id: int, role: str, content: str) -> None:
+    async def append_message(self, conversation_id: str, user_id: int | None, role: str, content: str) -> None:
         ...
 
     @abstractmethod
-    async def delete(self, conversation_id: str, user_id: int) -> None:
+    async def delete(self, conversation_id: str, user_id: int | None) -> None:
+        ...
+
+    @abstractmethod
+    async def transfer_ownership(
+        self,
+        conversation_id: str,
+        old_user_id: int | None,
+        new_user_id: int,
+    ) -> None:
         ...
 
 
@@ -62,18 +71,18 @@ class InMemoryBackend(MemoryBackend):
         self._conversations: "OrderedDict[str, ConversationRecord]" = OrderedDict()
         self._max_messages = max_messages
 
-    async def get(self, conversation_id: str, user_id: int) -> Optional[ConversationRecord]:
+    async def get(self, conversation_id: str, user_id: int | None) -> Optional[ConversationRecord]:
         record = self._conversations.get(conversation_id)
         if record is None or record.user_id != user_id:
             return None
         return record
 
-    async def create(self, conversation_id: str, user_id: int) -> ConversationRecord:
+    async def create(self, conversation_id: str, user_id: int | None) -> ConversationRecord:
         record = ConversationRecord(conversation_id=conversation_id, user_id=user_id)
         self._conversations[conversation_id] = record
         return record
 
-    async def append_message(self, conversation_id: str, user_id: int, role: str, content: str) -> None:
+    async def append_message(self, conversation_id: str, user_id: int | None, role: str, content: str) -> None:
         record = await self.get(conversation_id, user_id)
         if record is None:
             record = await self.create(conversation_id, user_id)
@@ -82,7 +91,20 @@ class InMemoryBackend(MemoryBackend):
         if len(record.messages) > self._max_messages:
             record.messages = record.messages[-self._max_messages :]
 
-    async def delete(self, conversation_id: str, user_id: int) -> None:
+    async def delete(self, conversation_id: str, user_id: int | None) -> None:
         record = self._conversations.get(conversation_id)
         if record is not None and record.user_id == user_id:
             del self._conversations[conversation_id]
+
+    async def transfer_ownership(
+        self,
+        conversation_id: str,
+        old_user_id: int | None,
+        new_user_id: int,
+    ) -> None:
+        record = self._conversations.get(conversation_id)
+        if record is None:
+            return
+        if record.user_id != old_user_id:
+            return
+        record.user_id = new_user_id

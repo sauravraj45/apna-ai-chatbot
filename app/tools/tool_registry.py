@@ -7,7 +7,7 @@ tool-call by name to the right class, always constructed with the current
 DB session + authenticated user_id.
 """
 
-from typing import Any, ClassVar, Dict, List, Type
+from typing import Any, Dict, List, Type
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +32,28 @@ TOOL_CLASSES: List[Type[BaseTool]] = [
     FAQTool,
 ]
 
-_TOOLS_BY_NAME: Dict[str, Type[BaseTool]] = {cls.name: cls for cls in TOOL_CLASSES}
+_TOOLS_BY_NAME: Dict[str, Type[BaseTool]] = {
+    cls.name: cls for cls in TOOL_CLASSES
+}
+
+# ---------------------------------------------------------------------
+# Tools that require the user to be authenticated.
+# Public tools (FAQ, Product Search, Policy etc.) should NOT be added here.
+# ---------------------------------------------------------------------
+AUTH_REQUIRED_TOOLS = {
+    UserTool.name,
+    AddressTool.name,
+    OrdersTool.name,
+    OrderItemsTool.name,
+    OrderAddressTool.name,
+}
+
+
+def requires_auth(tool_name: str) -> bool:
+    """
+    Returns True if the requested tool requires authentication.
+    """
+    return tool_name in AUTH_REQUIRED_TOOLS
 
 
 def get_tool_specs() -> List[Dict[str, Any]]:
@@ -46,21 +67,30 @@ async def dispatch_tool_call(
     db: AsyncSession,
     user_id: int,
 ) -> Any:
-    """Instantiate and run the requested tool, scoped to `user_id`.
-
-    Raises:
-        ValidationAppError: if the LLM requested an unknown tool name.
     """
+    Instantiate and run the requested tool.
+    """
+
     tool_cls = _TOOLS_BY_NAME.get(tool_name)
+
     if tool_cls is None:
         logger.warning("LLM requested unknown tool: %s", tool_name)
         raise ValidationAppError(f"Unknown tool requested: {tool_name}")
 
+    arguments = arguments or {}
+
     tool = tool_cls(db=db, user_id=user_id)
-    logger.info("Dispatching tool=%s user_id=%s args=%s", tool_name, user_id, list(arguments.keys()))
+
+    logger.info(
+        "Dispatching tool=%s user_id=%s args=%s",
+        tool_name,
+        user_id,
+        list(arguments.keys()),
+    )
+
     result = await tool.run(**arguments)
 
-    # Pydantic model -> plain dict for JSON serialization back to the LLM.
     if hasattr(result, "model_dump"):
         return result.model_dump(mode="json")
+
     return result
