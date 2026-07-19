@@ -94,11 +94,40 @@ class AIService:
         Returns:
             (reply_text, conversation_id)
         """
-        memory = ConversationMemory(user_id=user_id)
+        # STEP 1: if this is an existing conversation, consult ChatState
+        # BEFORE creating ConversationMemory. A prior turn may have
+        # authenticated this conversation via the email step-up flow and
+        # transferred its backend ownership to a real user_id, even though
+        # the JWT user_id on THIS request is still None (anonymous callers
+        # don't get a JWT just because they authenticated by email mid-chat).
+        # Without consulting ChatState first, ConversationMemory would be
+        # created with the stale (None) user_id, fail to find the
+        # now-user-15-owned conversation, and silently spawn a new anonymous
+        # one -- losing history and re-triggering the email prompt.
+        chat_state = chat_state_manager.get(conversation_id) if conversation_id else None
+
+        # STEP 2: effective_memory_user is the id that actually owns the
+        # conversation record in the backend right now -- the
+        # step-up-authenticated user_id if this conversation was already
+        # claimed, otherwise the JWT user_id.
+        effective_memory_user = (
+            chat_state.authenticated_user_id
+            if chat_state is not None and getattr(chat_state, "authenticated_user_id", None) is not None
+            else user_id
+        )
+
+        # STEP 3 & 4: create ConversationMemory scoped to the correct
+        # owner, then load (or create) the conversation record under that
+        # ownership.
+        memory = ConversationMemory(user_id=effective_memory_user)
         record = await memory.get_or_create(conversation_id)
         resolved_conversation_id = record.conversation_id
 
-        chat_state = chat_state_manager.get(resolved_conversation_id)
+        # Brand-new conversation (conversation_id was None above, so
+        # ChatState couldn't be looked up yet) -- fetch/create it now that
+        # we have a definite conversation_id.
+        if chat_state is None:
+            chat_state = chat_state_manager.get(resolved_conversation_id)
 
         # Resolve identity for this turn and figure out what the LLM should
         # actually be asked about (normally user_message, but if this turn
@@ -112,7 +141,7 @@ class AIService:
             is_replay,
         ) = await self._resolve_identity_for_turn(
             db=db,
-            user_id=user_id,
+            user_id=effective_memory_user,
             memory=memory,
             chat_state=chat_state,
             conversation_id=resolved_conversation_id,
@@ -125,7 +154,30 @@ class AIService:
             await memory.add_assistant_message(resolved_conversation_id, formatted_reply)
             return formatted_reply, resolved_conversation_id
 
+        if is_replay:
+            # Ownership of the conversation was just transferred to
+            # effective_user_id inside _resolve_identity_for_turn(). The
+            # `record` loaded above still reflects the pre-authentication
+            # (anonymous) ownership snapshot -- reload a fresh record under
+            # the now-correct owner rather than continuing to use the
+            # stale one, so history and future lookups stay consistent
+            # with the conversation's real backend ownership.
+            memory = ConversationMemory(user_id=effective_user_id)
+            record = await memory.get_required(resolved_conversation_id)
+
         history = memory.to_llm_messages(record.messages)
+
+        if is_replay and history and history[-1]["role"] == "assistant" and history[-1]["content"] == self.formatter.format(EMAIL_PROMPT):
+            # The last assistant turn was us asking for the registered
+            # email -- that's an artifact of the step-up-auth flow, not
+            # part of the actual conversation. Leaving it in would make
+            # the LLM see its own "please enter your email" prompt right
+            # before the replayed question and reply with something like
+            # "Thank you for authenticating" instead of answering the
+            # original request. Drop just that one trailing message; every
+            # other message in history is left untouched.
+            history = history[:-1]
+
         messages = self.prompt_manager.build_messages(history, effective_message)
 
         reply_text = await self._run_tool_loop(
